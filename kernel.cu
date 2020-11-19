@@ -1,121 +1,120 @@
 
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-
+#include<math.h>
 #include <stdio.h>
+#include<stdlib.h>
+#include<string.h>
+#define N 3
 
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
-
-__global__ void addKernel(int *c, const int *a, const int *b)
+__global__ void code(char *A, int *B, char *C, int len)
 {
-    int i = threadIdx.x;
-    c[i] = a[i] + b[i];
+	int i = threadIdx.x; //cols
+	int j = blockIdx.x; //rows just to see if it changes the code
+	int k = blockDim.x;
+	int temp = 0;
+	for (int b = 0; b < len; b++)
+	{
+		temp = 0;
+		if (j < N)
+		{
+			for (int c = 0; c < k; c++)
+				temp = temp + ((int)A[b*k + c] * B[j*k + c]);
+			if (temp != (-52))
+				C[b*k + j] = (char)temp;
+			else
+				C[b*k + j] = '\0';
+		}
+
+	}
+
 }
 
 int main()
 {
-    const int arraySize = 5;
-    const int a[arraySize] = { 1, 2, 3, 4, 5 };
-    const int b[arraySize] = { 10, 20, 30, 40, 50 };
-    int c[arraySize] = { 0 };
+	// Host variables and Keys Declaration
+	char str[50000], encrypt[50000], decrypt[50000];
+	fgets(str, 50000, stdin);
+	float etime, dtime;
+	cudaEvent_t estart, estop;
+	int len = strlen(str);
+	int ekey[N][N] = { {1,2,-1},{-2,0,1},{1,-1,0} };
+	int dkey[N][N] = { {1,1,2},{1,1,1},{2,3,4} };
 
-    // Add vectors in parallel.
-    cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addWithCuda failed!");
-        return 1;
-    }
+	// Calculating loops to process entire string	
+	double a = (double)len / (double)N;
+	int loop_count = ceil(a);
 
-    printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-        c[0], c[1], c[2], c[3], c[4]);
+	// creating Events to calculate time
+	cudaEventCreate(&estart);
+	cudaEventCreate(&estop);
 
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceReset failed!");
-        return 1;
-    }
+	// Encryption Process
 
-    return 0;
-}
+		// Create Device Variables
+	char *str1, *strop;
+	int *key;
 
-// Helper function for using CUDA to add vectors in parallel.
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-{
-    int *dev_a = 0;
-    int *dev_b = 0;
-    int *dev_c = 0;
-    cudaError_t cudaStatus;
+	// Allocate memory to Variables on Device
+	cudaMalloc((char**)&str1, sizeof(char)*len);
+	cudaMalloc((char**)&strop, sizeof(char)*len);
+	cudaMalloc((int**)&key, sizeof(int)*N*N);
 
-    // Choose which GPU to run on, change this on a multi-GPU system.
-    cudaStatus = cudaSetDevice(0);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-        goto Error;
-    }
+	// Copy data from Host to Device
+	cudaMemcpy(str1, str, sizeof(char)*len, cudaMemcpyHostToDevice);
+	cudaMemcpy(key, ekey, sizeof(int)*N*N, cudaMemcpyHostToDevice);
 
-    // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+	// Start event timer for encryption
+	cudaEventRecord(estart, 0);
+	cudaEventSynchronize(estart);
 
-    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+	//Pass it on to function and get back the cyphr
+	code << <N, N >> > (str1, key, strop, loop_count);
+	cudaDeviceSynchronize();
 
-    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+	// Stop Event timmer by using another counter
+	cudaEventRecord(estop, 0);
+	cudaEventSynchronize(estop);
+	cudaEventElapsedTime(&etime, estart, estop);
 
-    // Copy input vectors from host memory to GPU buffers.
-    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+	cudaMemcpy(encrypt, strop, sizeof(char)*len, cudaMemcpyDeviceToHost);
 
-    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+	cudaFree(str1);
+	cudaFree(strop);
+	cudaFree(key);
+	printf("\nEncryption : ");
+	for (int i = 0; i < len; i++)
+	{
+		printf("%c", encrypt[i]);
+	}
+	printf("\n");
 
-    // Launch a kernel on the GPU with one thread for each element.
-    addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
+	// Decryption Process
 
-    // Check for any errors launching the kernel
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-        goto Error;
-    }
-    
-    // cudaDeviceSynchronize waits for the kernel to finish, and returns
-    // any errors encountered during the launch.
-    cudaStatus = cudaDeviceSynchronize();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-        goto Error;
-    }
+		// Allocate memory to Variables on Device
+	cudaMalloc((char**)&str1, sizeof(char)*len);
+	cudaMalloc((char**)&strop, sizeof(char)*len);
+	cudaMalloc((int**)&key, sizeof(int)*N*N);
 
-    // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(int), cudaMemcpyDeviceToHost);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+	// Copy data from Host to Device
+	cudaMemcpy(str1, encrypt, sizeof(char)*len, cudaMemcpyHostToDevice);
+	cudaMemcpy(key, dkey, sizeof(int)*N*N, cudaMemcpyHostToDevice);
 
-Error:
-    cudaFree(dev_c);
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    
-    return cudaStatus;
+	code << <N, N >> > (str1, key, strop, loop_count);
+	cudaDeviceSynchronize();
+
+	cudaMemcpy(decrypt, strop, sizeof(char)*len, cudaMemcpyDeviceToHost);
+
+	cudaFree(str1);
+	cudaFree(strop);
+	cudaFree(key);
+	printf("\n\nDecryption : ");
+	for (int i = 0; i < len; i++)
+	{
+		printf("%c", decrypt[i]);
+	}
+	printf("\n");
+
+	printf("\n\nEncryption Time : %fms\n\n", etime);
+	return 0;
 }
